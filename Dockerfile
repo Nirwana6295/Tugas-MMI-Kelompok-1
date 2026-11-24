@@ -12,6 +12,8 @@ COPY prisma ./prisma/
 RUN npm ci
 
 COPY . .
+# Guarantee public directory exists even if git omitted empty directories
+RUN mkdir -p /app/public
 RUN npx prisma generate
 RUN npm run build
 
@@ -24,6 +26,7 @@ RUN apk add --no-cache openssl
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
+# Copy artifacts from builder stage
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules

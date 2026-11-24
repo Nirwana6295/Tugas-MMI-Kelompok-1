@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://geospatialx.up.railway.app/sitemap.xml
