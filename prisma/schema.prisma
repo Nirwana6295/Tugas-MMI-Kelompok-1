@@ -1,0 +1,186 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  STUDENT
+  TEACHER
+  VALIDATOR
+  ADMIN
+}
+
+enum StimulusType {
+  IMAGE
+  SATELLITE_CROP
+  THEMATIC_MAP
+  AUDIO
+  VIDEO
+  CASE_STUDY
+}
+
+model User {
+  id            String          @id @default(cuid())
+  name          String
+  email         String          @unique
+  passwordHash  String
+  role          Role            @default(STUDENT)
+  schoolClassId String?
+  schoolClass   SchoolClass?    @relation(fields: [schoolClassId], references: [id], onDelete: SetNull)
+  progresses    StudentProgress[]
+  quizAttempts  QuizAttempt[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@map("users")
+}
+
+model SchoolClass {
+  id           String   @id @default(cuid())
+  name         String   @unique // e.g. "X-1", "X-2", "X-3" SMAN 1 Mejayan
+  academicYear String   @default("2026/2027")
+  students     User[]
+  createdAt    DateTime @default(now())
+
+  @@map("school_classes")
+}
+
+model Chapter {
+  id           String        @id @default(cuid())
+  slug         String        @unique // litosfer, pedosfer, atmosfer, hidrosfer, biosfer, antroposfer
+  title        String
+  order        Int           @unique
+  description  String
+  sphereName   String        // e.g. "Dinamika Litosfer"
+  themeColor   String        // e.g. "#D9480F"
+  videoUrl     String?       // Official YouTube curriculum reference
+  subMaterials SubMaterial[]
+  quiz         Quiz?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@map("chapters")
+}
+
+model SubMaterial {
+  id              String            @id @default(cuid())
+  chapterId       String
+  chapter         Chapter           @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  slug            String            @unique
+  order           Int
+  title           String
+  summary         String
+  contentMarkdown String            @db.Text
+  diagramUrl      String?
+  audioUrl        String?
+  videoUrl        String?
+  latitude        Float?
+  longitude       Float?
+  zoomLevel       Int?              @default(14)
+  progresses      StudentProgress[]
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([chapterId, order])
+  @@map("sub_materials")
+}
+
+model GeospatialLayer {
+  id                 String   @id @default(cuid())
+  name               String
+  slug               String   @unique
+  level              Int      // 1 (Makro: Global/Nasional), 2 (Meso: Regional Madiun), 3 (Mikro: SMAN 1 Mejayan)
+  category           String   // "tectonics", "watershed", "soil", "remote_sensing", "school_boundary"
+  source_name        String   // e.g. "Badan Informasi Geospasial (BIG)", "BMKG", "BNPB"
+  license_type       String   // e.g. "CC-BY-4.0", "Open Government Data", "Google Maps Platform Standard"
+  attribution_text   String   // Rendered directly in AttributionLicenseBar.tsx
+  is_verified        Boolean  @default(false) // Must be verified by VALIDATOR before exposure to students
+  geojson_simplified Json     // Cached simplified GeoJSON for fast school-lab rendering
+  opacity_default    Float    @default(0.8)
+  stroke_color       String   @default("#00D2EE")
+  fill_color         String   @default("#004090")
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  @@index([level, is_verified])
+  @@map("geospatial_layers")
+}
+
+model StudentProgress {
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subMaterialId String
+  subMaterial   SubMaterial @relation(fields: [subMaterialId], references: [id], onDelete: Cascade)
+  isCompleted   Boolean     @default(false)
+  completedAt   DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  // Composite unique constraint ensures tamper-proof deterministic progress calculation
+  @@unique([userId, subMaterialId])
+  @@map("student_progress")
+}
+
+model Quiz {
+  id                String        @id @default(cuid())
+  chapterId         String        @unique
+  chapter           Chapter       @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  title             String
+  description       String
+  timeLimitMinutes  Int           @default(15)
+  passingScore      Float         @default(75.0)
+  totalQuestions    Int           @default(5)
+  questions         Question[]
+  attempts          QuizAttempt[]
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@map("quizzes")
+}
+
+model Question {
+  id                   String       @id @default(cuid())
+  quizId               String
+  quiz                 Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  order                Int
+  cognitive_level      String       @default("C4") // Bloom C4 (Analyzing)
+  stimulus_type        StimulusType @default(CASE_STUDY)
+  stimulus_url         String?
+  stimulus_text        String       @db.Text
+  question_text        String       @db.Text
+  option_a             String
+  option_b             String
+  option_c             String
+  option_d             String
+  correct_option_key   String       // "a", "b", "c", or "d" (strictly guarded server-side)
+  explanation_feedback String       @db.Text // Diagnostic feedback revealed post-submission
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  @@unique([quizId, order])
+  @@map("questions")
+}
+
+model QuizAttempt {
+  id              String    @id @default(cuid())
+  quizId          String
+  quiz            Quiz      @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startedAt       DateTime  @default(now())
+  submittedAt     DateTime?
+  score           Float     @default(0.0)
+  isPassed        Boolean   @default(false)
+  answersJson     Json      // Map of { questionId: selectedOption }
+  diagnosticsJson Json      // Itemized feedback with cognitive level achievement
+  timeSpentSeconds Int?
+  createdAt       DateTime  @default(now())
+
+  @@index([userId, quizId])
+  @@map("quiz_attempts")
+}
